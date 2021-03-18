@@ -39,7 +39,7 @@ alphabet = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q',
 
 
 
-defaultHyperparams = {'Nres' : 300,       #no. reservoir units 
+defaultHyperparams = {'Nres' : 300,     #no. reservoir units 
 					'Nz' : 1,           #no. output units
 					'Nin' : 26,         #no. input units
 					'Nres_in' : 300,    #no. reservoir units which directly connect to input
@@ -69,6 +69,7 @@ class Reservoir():
 			hyperparams (dict): Dictionary of hyperparemters. Defaults to None which then triggers Default Hyperperparams to be used
 		"""		
 		if hyperparams is None: hyperparams = defaultHyperparams
+		self.hyperparams = hyperparams
 
 		self.Nres = hyperparams['Nres']          #no. reservoir units 
 		self.Nz = hyperparams['Nz']              #no. output units
@@ -84,7 +85,9 @@ class Reservoir():
 		self.g_FB = hyperparams['g_FB']          #connection strength of feedback 
 		self.sigma = hyperparams['sigma']        #network noise std
 
-		self.hist = {'z' : []} #a dictionary where history is stored 
+		self.className = "Reservoir"
+
+		self.hist = {} #a dictionary where history is stored 
 
 		self._initialise() #initialises networks weights etc. 
 
@@ -137,20 +140,20 @@ class Reservoir():
 		if inputVec is None: inputVec = np.zeros(self.Nin)
 
 		#Dynamical Equations:  see Asabuki et al. 2018 or FORCE learning paper (Sussillo) 
-		self.x_ = ((1 - self.dt/self.tau)*self.x +  #self-decay
+		self.x = ((1 - self.dt/self.tau)*self.x +  #self-decay
 				(self.dt/self.tau)*self.g_res*np.matmul(self.J_GG,self.r) +  #recurrent input
 				(self.dt/self.tau)*self.g_FB*np.matmul(self.J_Gz,self.z) +  #feedback input
 				(self.dt/self.tau)*np.matmul(self.J_GI,inputVec) +  #external input
 					np.sqrt(self.dt)*self.sigma*np.random.randn(self.Nres)) #noise
-		self.r_ = np.tanh(self.x_)
-		self.z_ = np.matmul(self.w,self.r_[self.synapseList])
+		self.r = np.tanh(self.x)
+		self.z = np.matmul(self.w,self.r[self.synapseList])
 
 		#returns reservoir variable to the user 
 		returnables = {}
 		if returnItems == None: return
-		if 'z' in returnItems: returnables['z'] = self.z_
-		if 'r' in returnItems: returnables['r'] = self.r_
-		if 'x' in returnItems: returnables['x'] = self.x_
+		if 'z' in returnItems: returnables['z'] = self.z
+		if 'r' in returnItems: returnables['r'] = self.r
+		if 'x' in returnItems: returnables['x'] = self.x
 		return returnables
 
 	def runTrainingStep(self,desiredOutputs):
@@ -171,9 +174,6 @@ class Reservoir():
 		dw = - (c * (e_minus * np.tile(k,(self.Nz,1)).T)).T
 		self.w = self.w + dw
 		return e_minus
-
-
-
 
 
 
@@ -220,6 +220,9 @@ def _syllableShape(syllable=' ',inputParams=defaultInputParams):
 		for char in syllable:
 			syllableShape[:,syllables.index(char)] = inputShape
 	return syllableShape 
+
+
+
 
 
 def _getNextSyllable(inputParams): #an iterator functions that when calls spits out the next syllables. This does all the calculation for when to move between chunks etc. 
@@ -310,6 +313,7 @@ def _getNextSyllable(inputParams): #an iterator functions that when calls spits 
 
 
 
+
 def getInputs(inputParams,totalTime=None):
 	"""Constructs the inputs given all the information contained in inputParams. Returns a dict with all the information/data about the input inside. 
 	This dict is used later on by variety of functions. This function relies on _getNextSyllable and _syllableShape
@@ -378,6 +382,9 @@ def getInputs(inputParams,totalTime=None):
 	return inputData
 
 
+
+
+
 def plotInputs(inputs,tstart=0,tend=5,title=None,saveName=""):
 	"""Takes the inputs and plots it nicely showing where the chunks are (shaded) and listing syllables on yaxis
 
@@ -422,9 +429,6 @@ def plotInputs(inputs,tstart=0,tend=5,title=None,saveName=""):
 
 
 
-
-
-
 def saveFigure(fig,saveTitle=""):
 	"""saves figure to file, by data (folder) and time (name) 
 	Args:
@@ -437,13 +441,13 @@ def saveFigure(fig,saveTitle=""):
 	figdir = f"./figures/{today}/"
 	now = datetime.strftime(datetime.now(),'%H%M')
 	path = f"{figdir}{saveTitle}_{now}.png"
-	fig.savefig(f"{figdir}{saveTitle}_{now}.png", dpi=300,tight_layout=True)
+	fig.savefig(f"{figdir}{saveTitle}_{now}.pdf", dpi=400,tight_layout=True)
 	return path
 
 
 
 
-	
+
 	
 	
 class ReservoirPair():
@@ -463,6 +467,7 @@ class ReservoirPair():
 			inputs (dict, optional): If defined these will be stored as an input under the name 'train', by default training will be on this input. Defaults to None.
 		"""		
 		self.hyperparams = hyperparams
+		self.className = "ReservoirPair"
 
 		self.inputDict = {} #a dictionary in which input dictionaries will be stored (for training and testing) 
 		self.hist = {} #a dictionary forsaving historical data (useful for later plotting)
@@ -483,7 +488,7 @@ class ReservoirPair():
 		"""		
 		self.inputDict[name] = inputs
 
-	def trainPair(self,window=5,saveTrain=False,returnItems=['z']):
+	def trainPair(self,window=5,saveTrain=False,returnItems=['z'],maxTrainTime=None):
 		"""Trains the reservoir pair by mutual prediction algorithm discussed in Asabuki et al. 2018.
 		Args:
 			window (int, optional): The output-to-be-predicted is normalised by a running average this long, in seconds. Defaults to 5.
@@ -493,14 +498,17 @@ class ReservoirPair():
 		dt = self.hyperparams['dt']
 		z1_list = np.zeros(shape=(self.hyperparams['Nz'],int(window/(dt/1000))))
 		z2_list = np.zeros(shape=(self.hyperparams['Nz'],int(window/(dt/1000))))
-		
+
 		if saveTrain == True:
 			self.hist['train'] = {}
 			self.hist['train']['z'] = np.zeros(shape=(self.hyperparams['Nz'],self.inputDict['train']['data'].shape[0],1))
 			self.hist['train']['r'] = np.zeros(shape=(self.hyperparams['Nres'],self.inputDict['train']['data'].shape[0],1))
 			
 		inputs = self.inputDict['train']
-		for i in tqdm(range(len(inputs['data'])),desc='Training reservoir pair'):
+
+		if maxTrainTime is None: endIdx = len(inputs['data'])
+		else: endIdx = np.argmin(np.abs(inputs['t'] - maxTrainTime))
+		for i in tqdm(range(endIdx),desc='Training reservoir pair'):
 			reservoir1Output = self.res1.runDynamicsStep(inputs['data'][i],returnItems=returnItems)
 			reservoir2Output = self.res2.runDynamicsStep(inputs['data'][i],returnItems=returnItems)
 
@@ -511,38 +519,23 @@ class ReservoirPair():
 				r1 = reservoir1Output['r']
 				r2 = reservoir2Output['r']
 
-			if saveTrain == True: 
+			if saveTrain == True: #save outputs 
 				if 'z' in returnItems:
 					self.hist['train']['z'][:,i,0] = z1
 				if 'r' in returnItems:
 					self.hist['train']['r'][:,i,0] = r1
 
-			z1_list = np.roll(z1_list, -1); z1_list[:,-1] = z1
+			z1_list = np.roll(z1_list, -1); z1_list[:,-1] = z1 #roll short term history arrays and replace last with new output
 			z2_list = np.roll(z2_list, -1); z2_list[:,-1] = z2
 
 			if i > window / (dt/1000): 
-				y1 = (z1 - np.mean(z1_list,axis=1)) / np.std(z1_list,axis=1)
+				y1 = (z1 - np.mean(z1_list,axis=1)) / np.std(z1_list,axis=1) #normalise the output
 				y2 = (z2 - np.mean(z2_list,axis=1)) / np.std(z2_list,axis=1)
 
-				y1,y2 = self.rectifiedTanhOutput(y1,y2)
+				y1,y2 = self.rectifiedTanhOutput(y1,y2) #rectiry tanh it as per paper 
 
 				self.res1.runTrainingStep(y2) #res1 tries to predict res2
 				self.res2.runTrainingStep(y1) #res2 tries to predict res1
-
-	def testPair(self,Ntest=1,testName='test',testData='test',returnItems=['z'],verbose=True):
-		Nz = self.hyperparams['Nz']
-		Nres = self.hyperparams['Nres']
-		testData = self.inputDict[testData]['data']
-		self.hist[testName] = {}
-		self.hist[testName]['z'] = np.zeros(shape=(Nz,testData.shape[0],Ntest))
-		self.hist[testName]['r'] = np.zeros(shape=(Nres,testData.shape[0],Ntest))
-		for i in tqdm(range(Ntest),desc='Running multiple tests of reservoir',disable=(not verbose)):
-			for j in tqdm(range(testData.shape[0]),desc='Test %g'%i,leave=False,disable=(not verbose)):
-				reservoirOutput = self.res1.runDynamicsStep(testData[j],returnItems=returnItems)
-				if 'z' in returnItems: 
-					self.hist[testName]['z'][:,j,i] = reservoirOutput['z']
-				if 'r' in returnItems:
-					self.hist[testName]['r'][:,j,i] = reservoirOutput['r']
 
 	def rectifiedTanhOutput(self,ya,yb,beta=3,gamma=0.5):
 		try: gamma = self.hyperparams['gamma']
@@ -558,56 +551,107 @@ class ReservoirPair():
 		yb = np.maximum(yb,0)
 		return ya,yb
 
-	def identicalInitialisation(self,x=None,name='test',t=0):
-		if x is not None:
-			self.res1.x = x
-		else:
-			timeIndex = np.argmin(np.abs(self.inputDict['train']['t'] - t))
-			r = self.hist[name]['r'][:,timeIndex,0]
-			self.res1.x = np.arctanh(r)
-		return
 
 
-def plotTest(reservoirPair,testName='test',testData='test',tstart=0,tend=5,colorOrders=None,plotTrials=True,saveName=None,smoothedMean=False):
-	rp = reservoirPair
-	if colorOrders == None: colorOrders = np.arange(rp.Nz)+rp.Nz
 
-	t = rp.inputDict[testData]['t']
-	chunkData = rp.inputDict[testData]['chunkData']
-	try: testData = rp.hist[testName]['z']
-	except KeyError: testData = rp.hist[testName]
+
+
+
+def testReservoir(reservoir,inputs,Ntest=1,testName='test',saveItems=['z'],verbose=True,plotAfter=False):
+	"""Tests reservoir (if reservoir pair is passed, it tests res1 of this pair) on an inputs and stores to history. 
+	Args:
+		reservoir (reservoir): the reservoir to test 
+		input (dict): the input dict (from getInputs) to test the reservoir on 
+		Ntest (int, optional): How many identical (different due to random initilisation and noise) tests to run. Defaults to 1.
+		testName (str, optional): What to call the test when it is saved. Defaults to 'test'.
+		testData (str, optional): Name of data store in inputsDict, to be tested. Defaults to testName.
+		saveItems (list, optional): which items to save to history. Defaults to ['z'].
+		verbose (bool, optional): If false, testing will be silent (no output). Defaults to True.
+		plotAfter (bool): if True, plots the result of the test straight after 
+	"""		
+	if reservoir.className == 'ReservoirPair': #if you pass a reservoir pair, defaults to res1
+		reservoir = reservoir.res1
+
+	Nz = reservoir.hyperparams['Nz']
+	Nres = reservoir.hyperparams['Nres']
+
+	testData = inputs['data']
+
+	#prepare the history
+	reservoir.hist[testName] = {}
+	reservoir.hist[testName]['z'] = np.zeros(shape=(Nz,testData.shape[0],Ntest))
+	reservoir.hist[testName]['r'] = np.zeros(shape=(Nres,testData.shape[0],Ntest))
+	reservoir.hist[testName]['inputs'] = inputs
+
+	#run the tests
+	for i in tqdm(range(Ntest),desc='Running multiple tests of reservoir',disable=(not verbose)):
+		for j in tqdm(range(testData.shape[0]),desc='Test %g'%i,leave=False,disable=(not verbose)):
+			reservoirOutput = reservoir.runDynamicsStep(testData[j],returnItems=saveItems)
+			if 'z' in saveItems: 
+				reservoir.hist[testName]['z'][:,j,i] = reservoirOutput['z']
+			if 'r' in saveItems:
+				reservoir.hist[testName]['r'][:,j,i] = reservoirOutput['r']
+	
+	if plotAfter == True: 
+		plotTest(reservoir)
+	
+	return 
+	
+
+
+
+
+
+
+def plotTest(reservoir,
+			testName='test',
+			tstart=0,
+			tend=5,
+			colorOrders=None,
+			plotTrials=False,
+			saveName=""):
+	"""Plots the result of a test on a reservoir. `the input to, and the results from, this test are saved in reservoir.testhist under the key name.
+	Dispalys the outputs of the reservoir, the plot is sahed according to whether the network is current in a chunk or not
+
+	Args:
+		reservoir (reservoir class): the reservoir which has been (perhaps trained and) tested 
+		testName (str, optional): the name of the test to look up in testhist. Defaults to 'test'.
+		tstart (float, optional): time in test to start plotting. Defaults to 0.
+		tend (float, optional): time in test to stop plotting. Defaults to 5.
+		colorOrders (list of strs, optional): List colours for the reservoir outputs to be plotted as. Defaults to None.
+		plotTrials (bool, optional): If True, all trials are plotted in a light shade. Defaults to True.
+		saveName (str, optional): name for plot to be saved as. Defaults to "".
+
+	Returns:
+		[type]: [description]
+	"""	
+	if reservoir.className == 'ReservoirPair': #if you pass a reservoir pair, defaults to res1
+		reservoir = reservoir.res1
+
+	if colorOrders is None: colorOrders = np.arange(reservoir.Nz)+reservoir.Nz #define colours for plotting 
+
+	t = reservoir.hist[testName]['inputs']['t']
+	chunkData = reservoir.hist[testName]['inputs']['chunkData']
+	testData = reservoir.hist[testName]['z']
 
 	fig,ax = plt.subplots(figsize=(4,1))
 	s,e = np.abs(t - tstart).argmin(), np.abs(t - tend).argmin()
-	for i in range(rp.Nz):
+	for i in range(reservoir.Nz):
 		if plotTrials == True:
 			for j in range(testData.shape[2]):
 				ax.plot(t[s:e],np.array(testData)[i,s:e,j],alpha=0.1,c='C%g'%(colorOrders[i]),linewidth=0.1)
-			ax.fill_between(t[s:e],np.mean(np.array(testData),axis=2)[i,s:e]+np.std(np.array(testData),axis=2)[i,s:e],np.mean(np.array(testData),axis=2)[i,s:e]-np.std(np.array(testData),axis=2)[i,s:e],color='C%g'%(colorOrders[i]),alpha=0.2)
-
 		ax.plot(t[s:e],np.mean(np.array(testData),axis=2)[i,s:e],alpha=1,c='C%g'%(colorOrders[i]))
-
-		if smoothedMean == True: 
-			smoothedMean = []
-			meanData = np.mean(np.array(testData),axis=2)[i]
-			for k in range(len(meanData)):
-				a = meanData[max(0,k-500):min(len(meanData),k+500)]
-				smoothedMean.append(np.mean(a))
-			print(len(t[s:e]), len(smoothedMean[s:e]))
-			ax.plot(t[s:e],smoothedMean[s:e],alpha=1,c='C%g'%(colorOrders[i]+1))
+		ax.fill_between(t[s:e],np.mean(np.array(testData),axis=2)[i,s:e]+np.std(np.array(testData),axis=2)[i,s:e],np.mean(np.array(testData),axis=2)[i,s:e]-np.std(np.array(testData),axis=2)[i,s:e],color='C%g'%(colorOrders[i]),alpha=0.2)
 
 	for c in chunkData:
 		if c[1] < tend and c[2] > tstart:
 			rect = matplotlib.patches.Rectangle((c[1],3),(c[2]-c[1]),-6,linewidth=0,edgecolor='r',facecolor='C%s'%(c[0]),alpha=0.3)
 			ax.add_patch(rect)
 
-
-
 	ax.set_xlabel('Time / s')
 	ax.set_ylabel('Activity')
 
-	if saveName is not None: 
-		plt.savefig("./figures/"+saveName+".png",dpi=300, bbox_inches='tight')
+	saveFigure(fig, saveName)
 
 	return fig, ax 
 
@@ -616,15 +660,52 @@ def plotTest(reservoirPair,testName='test',testData='test',tstart=0,tend=5,color
 
 
 
+
 def pickleAndSave(class_,name,saveDir='./savedItems/'):
+	"""pickles and saves a class
+	this is not an efficient way to save the data, but it is easy 
+	use carefully with reservoir and Reservoireservoirair clases as these can get HUGE (~gigabytes)
+	this will overwrite previous saves without warning
+	Args:
+		class_ (any class): the class/model to save
+		name (str): the name to save it under 
+		saveDir (str, optional): Directory to save into. Defaults to './savedItems/'.
+	"""	
 	with open(saveDir + name+'.pkl', 'wb') as output:
 		pickle.dump(class_, output, pickle.HIGHEST_PROTOCOL)
 	return 
 
 def loadAndDepickle(name, saveDir='./savedItems/'):
+	"""Loads and depickles a class saved using pickleAndSave
+	Args:
+		name (str): name it was saved as
+		saveDir (str, optional): Directory it was saved in. Defaults to './savedItems/'.
+
+	Returns:
+		class: the class/model
+	"""	
 	with open(saveDir + name+'.pkl', 'rb') as input:
 		item = pickle.load(input)
 	return item
+
+
+
+
+
+
+
+
+
+
+"""
+======================================================================
+OTHER RANDOM FUNCTIONS I STILL NEED TO CLEAN UP 
+======================================================================
+"""
+
+
+
+
 
 
 
