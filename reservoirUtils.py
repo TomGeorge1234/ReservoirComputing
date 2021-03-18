@@ -8,6 +8,8 @@ from IPython.display import Video
 import matplotlib 
 import random
 from tqdm.notebook import tqdm
+import os
+from datetime import datetime
 from matplotlib import rcParams
 from cycler import cycler 
 plt.style.use("seaborn")
@@ -34,27 +36,40 @@ rcParams['axes.prop_cycle']=cycler('color', ['#66c2a5','#fc8d62','#8da0cb','#e78
 
 alphabet = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z']
 
-defaultHyperparams = {'Nres' : 300,
-					  'Nz' : 1,
-					  'Nin' : 26,
-					  'Nres_in' : 300,
-					  'Nres_out' : 300,
-					  'p' : 0.8,
-					  'ipr' : 1,
-					  'dt' : 1,
-					  'tau' : 10,
-					  'alpha' : 100,
-					  'g_res' : 1.5,
-					  'g_FB' : 1,
-					  'sigma' : 0.3}
+
+
+
+defaultHyperparams = {'Nres' : 300,       #no. reservoir units 
+					  'Nz' : 1,           #no. output units
+					  'Nin' : 26,         #no. input units
+					  'Nres_in' : 300,    #no. reservoir units which directly connect to input
+					  'Nres_out' : 300,   #no. reservoir units which directly connect to output
+					  'p' : 0.8,          #probability two reservoir units are connected 
+					  'ipr' : 1,          #no. of input units each input-connected reservoir unit joins
+					  'dt' : 1,           #simulation time constant in ms
+					  'tau' : 10,         #neuron time constant in ms
+					  'alpha' : 100,      #FORCE learning rate (aka. P-matrix regularisation param)
+					  'g_res' : 1.5,      #connection strength of reservoir units  
+					  'g_FB' : 1,         #connection strength of feedback 
+					  'sigma' : 0.3}      #network noise std
+
+
 """
 RESERVOIR CLASS
-Builds a single reservoir using passed hyperparmaeters 
-• runDynamicsStep() - takes input vector and runs a single full dynamics step
-• runTrainingStep() - takes the desired output and updates the weights (and P matrix) according to the rules of FORCE learning
+Builds a single reservoir using passed hyperparmeters 
 """
 class Reservoir():
-	def __init__(self,hyperparams):
+	"""A reservoir network, initialised with passed hyperparameters
+	• runDynamicsStep() - takes input vector and runs a single full dynamics step
+	• runTrainingStep() - takes the desired output and updates the weights (and P matrix) according to the rules of FORCE learning
+	"""	
+	def __init__(self,hyperparams=None):
+		"""Initialises hyperparameters as network atributes
+		Args:
+			hyperparams (dict): Dictionary of hyperparemters. Defaults to None which then triggers Default Hyperperparams to be used
+		"""		
+		if hyperparams is None: hyperparams = defaultHyperparams
+
 		self.Nres = hyperparams['Nres']          #no. reservoir units 
 		self.Nz = hyperparams['Nz']              #no. output units
 		self.Nin = hyperparams['Nin']            #no. input units
@@ -69,55 +84,73 @@ class Reservoir():
 		self.g_FB = hyperparams['g_FB']          #connection strength of feedback 
 		self.sigma = hyperparams['sigma']        #network noise std
 
-		self.inputs = {}
+		self.hist = {'z' : []} #a dictionary where history is stored 
 
-		self.hist = {'z' : []}
-
-		self._initialise()
+		self._initialise() #initialises networks weights etc. 
 
 	def _initialise(self):
+		"""Initialises all nodes (input, reservoir and output) and their connections/weights
+		"""		
+		#Input nodes to reservoir nodes 
+		#each reservoir neurons connects to on average self.ipr input nodes
 		J_GI = np.zeros(shape=(self.Nres,self.Nin))
 		for i in range(self.Nres_in):
 			for j in range(self.Nin):
 				if np.random.random()<(self.ipr/(self.Nin)):
 					J_GI[i,j] = np.random.normal()
-		self.J_GI = J_GI #input connections (each reservoir neurons connects to only one of the input nodes) 
+		self.J_GI = J_GI 
+
+		#Reservoir to reservoir recurrent weights
+		#nodes connect to each otyher with probability p
 		self.J_GG = np.zeros(shape=(self.Nres,self.Nres))
 		for i in range(self.Nres):
 			for j in range(self.Nres):
 				if np.random.rand() < self.p:
 					self.J_GG[i,j] = (1/np.sqrt(self.p * self.Nres)) * np.random.normal() #recurrent connection
+		
+		#Reservoir to output
 		self.w = np.random.randn(self.Nz,self.Nres_out)/np.sqrt(self.Nres_out)
-		self.synapseList = np.arange(self.Nres-self.Nres_out,self.Nres) #output connections
+
+		#An index list which define which reservoir nodes connect to the output (typical this is not all of them)
+		self.synapseList = np.arange(self.Nres-self.Nres_out,self.Nres) 
+
+		#Output to reservoir (i.e. feedback)
 		self.J_Gz = np.random.uniform(low=-1,high=1,size=(self.Nres,self.Nz)) #feedback connection 
 
-		self.x = np.random.normal(size=(self.Nres)) #starting values of the network neurons 
-		self.r = np.tanh(self.x) 
+		#Reservoir node initial values
+		self.x = np.random.normal(size=(self.Nres)) #Node values (membrane potentials) initialised randomly
+		self.r = np.tanh(self.x) #Activated node values (tanh activated "firing rates")
 		self.z = np.matmul(self.w, self.r[self.synapseList]) #initial output 
+
+		#FORCE learning inverse correlation matrix initial value
 		self.P = (1.0/self.alpha) * np.identity(self.Nres_out) #learning matrix 
 
 
-	def runDynamicsStep(self,inputVec=None,test=False,returnItems=None,hypothetical=False):
+	def runDynamicsStep(self,inputVec=None,returnItems=None):
+		"""Runs a dynamics step to update reservoir node values
+		Args:
+			inputVec (array, optional): The value of the input nodes at current time step. Defaults to None therefore zero.
+			returnItems (list of integers, optional): Which node values would you like the to return. Network updates is completed irrespective of whether/which nodes are returned. Defaults to None.
+		Returns:
+			[type]: [description]
+		"""		
 		if inputVec is None: inputVec = np.zeros(self.Nin)
-		self.x_ = (1 - self.dt/self.tau)*self.x + \
-				 (self.dt/self.tau)*self.g_res*np.matmul(self.J_GG,self.r) + \
-				 (self.dt/self.tau)*self.g_FB*np.matmul(self.J_Gz,self.z) + \
-				 (self.dt/self.tau)*np.matmul(self.J_GI,inputVec) + \
-				 np.sqrt(self.dt)*self.sigma*np.random.randn(self.Nres) 
+
+		#Dynamical Equations:  see Asabuki et al. 2019 or FORCE learning paper (Sussillo) 
+		self.x_ = ((1 - self.dt/self.tau)*self.x +  #self-decay
+				   (self.dt/self.tau)*self.g_res*np.matmul(self.J_GG,self.r) +  #recurrent input
+				   (self.dt/self.tau)*self.g_FB*np.matmul(self.J_Gz,self.z) +  #feedback input
+				   (self.dt/self.tau)*np.matmul(self.J_GI,inputVec) +  #external input
+				    np.sqrt(self.dt)*self.sigma*np.random.randn(self.Nres)) #noise
 		self.r_ = np.tanh(self.x_)
 		self.z_ = np.matmul(self.w,self.r_[self.synapseList])
-		if hypothetical == False: #its possible to just "see" what these updates would look like without actually implementing them
-			self.x = self.x_
-			self.r = self.r_
-			self.z = self.z_
+
 		returnables = {}
 		if returnItems == None: return
 		if 'z' in returnItems: returnables['z'] = self.z_
 		if 'r' in returnItems: returnables['r'] = self.r_
 		if 'x' in returnItems: returnables['x'] = self.x_
-
 		return returnables
-
 
 	def runTrainingStep(self,desiredOutputs):
 		#update P
@@ -337,6 +370,38 @@ def plotInputs(inputs,tstart=0,tend=5,title=' ',saveName=None):
 
 
 
+
+
+
+"""
+Saves a figure in "./figures/<todays_date>/<figure_name>_<todaystime>.png"
+Makes the folder if it doesn't exist
+
+Parameters: 
+• fig: the figure object
+• saveTitle: the title (a string) to save figure as
+
+Returns:
+Nothing is returned
+"""
+def saveFigure(fig,saveTitle=None):
+	today =  datetime.strftime(datetime.now(),'%y%m%d')
+	if not os.path.isdir(f"./figures/{today}/"):
+		os.mkdir(f"./figures/{today}/")
+	if saveTitle is None: 
+		saveTitle=""
+	figdir = f"./figures/{today}/"
+	now = datetime.strftime(datetime.now(),'%H%M')
+	fig.savefig(f"{figdir}{saveTitle}_{now}.png", dpi=300,tight_layout=True)
+	
+	return
+
+
+
+
+	
+	
+	
 class ReservoirPair():
 	def __init__(self,hyperparams,inputs):
 
