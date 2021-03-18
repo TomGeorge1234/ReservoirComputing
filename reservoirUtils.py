@@ -40,18 +40,18 @@ alphabet = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q',
 
 
 defaultHyperparams = {'Nres' : 300,       #no. reservoir units 
-					  'Nz' : 1,           #no. output units
-					  'Nin' : 26,         #no. input units
-					  'Nres_in' : 300,    #no. reservoir units which directly connect to input
-					  'Nres_out' : 300,   #no. reservoir units which directly connect to output
-					  'p' : 0.8,          #probability two reservoir units are connected 
-					  'ipr' : 1,          #no. of input units each input-connected reservoir unit joins
-					  'dt' : 1,           #simulation time constant in ms
-					  'tau' : 10,         #neuron time constant in ms
-					  'alpha' : 100,      #FORCE learning rate (aka. P-matrix regularisation param)
-					  'g_res' : 1.5,      #connection strength of reservoir units  
-					  'g_FB' : 1,         #connection strength of feedback 
-					  'sigma' : 0.3}      #network noise std
+					'Nz' : 1,           #no. output units
+					'Nin' : 26,         #no. input units
+					'Nres_in' : 300,    #no. reservoir units which directly connect to input
+					'Nres_out' : 300,   #no. reservoir units which directly connect to output
+					'p' : 0.8,          #probability two reservoir units are connected 
+					'ipr' : 1,          #no. of input units each input-connected reservoir unit joins
+					'dt' : 1,           #simulation time constant in ms
+					'tau' : 10,         #neuron time constant in ms
+					'alpha' : 100,      #FORCE learning rate (aka. P-matrix regularisation param)
+					'g_res' : 1.5,      #connection strength of reservoir units  
+					'g_FB' : 1,         #connection strength of feedback 
+					'sigma' : 0.3}      #network noise std
 
 
 """
@@ -136,15 +136,16 @@ class Reservoir():
 		"""		
 		if inputVec is None: inputVec = np.zeros(self.Nin)
 
-		#Dynamical Equations:  see Asabuki et al. 2019 or FORCE learning paper (Sussillo) 
+		#Dynamical Equations:  see Asabuki et al. 2018 or FORCE learning paper (Sussillo) 
 		self.x_ = ((1 - self.dt/self.tau)*self.x +  #self-decay
-				   (self.dt/self.tau)*self.g_res*np.matmul(self.J_GG,self.r) +  #recurrent input
-				   (self.dt/self.tau)*self.g_FB*np.matmul(self.J_Gz,self.z) +  #feedback input
-				   (self.dt/self.tau)*np.matmul(self.J_GI,inputVec) +  #external input
-				    np.sqrt(self.dt)*self.sigma*np.random.randn(self.Nres)) #noise
+				(self.dt/self.tau)*self.g_res*np.matmul(self.J_GG,self.r) +  #recurrent input
+				(self.dt/self.tau)*self.g_FB*np.matmul(self.J_Gz,self.z) +  #feedback input
+				(self.dt/self.tau)*np.matmul(self.J_GI,inputVec) +  #external input
+					np.sqrt(self.dt)*self.sigma*np.random.randn(self.Nres)) #noise
 		self.r_ = np.tanh(self.x_)
 		self.z_ = np.matmul(self.w,self.r_[self.synapseList])
 
+		#returns reservoir variable to the user 
 		returnables = {}
 		if returnItems == None: return
 		if 'z' in returnItems: returnables['z'] = self.z_
@@ -153,6 +154,12 @@ class Reservoir():
 		return returnables
 
 	def runTrainingStep(self,desiredOutputs):
+		"""Givenn a desired output, this trains the network (by FORCE learning, i.e. RLS) 
+		Args:
+			desiredOutputs: desider output for current time step that the weights will be fitted to
+		Returns:
+			float: the error, before the weight update
+		"""		
 		#update P
 		r = self.r[self.synapseList]
 		k = np.dot(self.P, r)
@@ -177,22 +184,31 @@ class Reservoir():
 INPUTS
 Experiments usually involve training the reservoirs on input timeseries with varying levels of temporaly regularity. 
 These functions assist with this by building a dictionary storing not only the actual input but also data such as the time or what 'chunks' we may be in. 
+
+Currently inputs are limited to temporal resolution of dt = 1ms but I should generalise this
 """
 defaultInputParams = {'experiment' : 'normal', #normal, schapiro, schaeffer etc. 
-					  'totalTime' : 500, #s
-					  'width' : 50, #ms 
-					  'chunkList' : [['a','b','c','d']], #in normal experiments chunks appears repeatedly between interchunk intervals 
-					  'chunkProbs' : None, #defauls to uniform probability of each chunk
-					  'chunkLabels' : None, #defaults to [0,1,2,...]
-					  'gapRange' : [5,9],  #gap between chunks randomly from this range (inclusive)
-					  'syllables' : alphabet, #all 
-					  'singleChunkOnly' : False, #True if you only want a single chunk e.g. for testing
-					  'interChunkSyllables': None, #if defined, syllables between chunks will only be from here, chunks will never be from here. Must be subset of syllables (optionally plus ' ').
-					  'chunkSize' : None, #schaeffer experiment specific (gives number of syllables in each chunk),
-					  'gain' : 2,
-					  'pdfs' : None}  #schaeffer experiment specific (gives probability of letters in chunk)  
+					'totalTime' : 500, #s
+					'width' : 50, #ms 
+					'chunkList' : [['a','b','c','d']], #in normal experiments chunks appears repeatedly between interchunk intervals 
+					'chunkProbs' : None, #defauls to uniform probability of each chunk
+					'chunkLabels' : None, #defaults to [0,1,2,...]
+					'gapRange' : [5,9],  #gap between chunks randomly from this range (inclusive)
+					'syllables' : alphabet, #all 
+					'singleChunkOnly' : False, #True if you only want a single chunk e.g. for testing
+					'interChunkSyllables': None, #if defined, syllables between chunks will only be from here, chunks will never be from here. Must be subset of syllables (optionally plus ' ').
+					'chunkSize' : None, #schaeffer experiment specific (gives number of syllables in each chunk),
+					'gain' : 2,
+					'pdfs' : None}  #schaeffer experiment specific (gives probability of letters in chunk)  
 
 def _syllableShape(syllable=' ',inputParams=defaultInputParams):
+	"""returns input with one (specified) syllable set to rising and falling exponetial 
+	Args:
+		syllable (str, optional): The syllable (i.e. which one of the inputs) to set non-zero. Defaults to ' ' i.e. no syllable.
+		inputParams (dictionary of inputParams, optional): The parameters of the inputs (syllable list, syllable time etc.). Defaults to defaultInputParams.
+	Returns:
+		array: of shape (N_input x 2*width.dt) to be added to the inputData frame at the required point.
+	"""	
 	syllables, width = inputParams['syllables'],inputParams['width']
 	syllableShape = np.zeros(shape=(2*width,len(syllables)))
 	inputShape = np.zeros(width*2) #the rising falling exponential shape of the inputs
@@ -207,8 +223,15 @@ def _syllableShape(syllable=' ',inputParams=defaultInputParams):
 
 
 def _getNextSyllable(inputParams): #an iterator functions that when calls spits out the next syllables. This does all the calculation for when to move between chunks etc. 
+	"""This function return (yields) the next syllable to be added to input. It records whether it is in or between chunks and yields next syllable correspoding to the experimental parameters given in the inputParams.
 
-	interChunk = True
+	Args:
+		inputParams (dict): The parameters of the inputs (syllable list, syllable time etc.)
+	Yields:
+		str: the next syllable
+		idx: whether the current syllable is in a chunk (idx = 0,1,2 corresponding to chunkId) or interchunk/random ('r'). Used for plotting later on.  
+	"""
+	interChunk = True #start not in a chunk 
 
 	syllables = inputParams['syllables']
 	experiment = inputParams['experiment']
@@ -219,6 +242,8 @@ def _getNextSyllable(inputParams): #an iterator functions that when calls spits 
 	interChunkSyllables = inputParams['interChunkSyllables']
 
 	while True: 
+		#choose random syllable between chunks 
+		# choose randomly from the syllable list unless interChunkSyllables is define, in whic case pick from these. 
 		if interChunk == True: 
 			for i in range(random.randint(gapRange[0],gapRange[1])):
 				if interChunkSyllables is not None:
@@ -228,7 +253,10 @@ def _getNextSyllable(inputParams): #an iterator functions that when calls spits 
 				yield nextSyllable, 'r'
 			interChunk = False
 			continue
-
+		
+		#while inside a chunk iterate through the chunk syllables and return them at each step 
+		#if syllable ends in '+' this represents OR. e.g. "abc+" means return "a" or "b" or "c"
+		#if syllable ends in '_' this represents .NOT e.g. "abc_" means return any syllable except "a" or "b" or "c" or those syllables in interChunkSyllables
 		if interChunk == False:
 			if experiment == 'normal':
 				idx = random.choices(range(len(chunkList)),weights=chunkProbs)[0]
@@ -244,23 +272,24 @@ def _getNextSyllable(inputParams): #an iterator functions that when calls spits 
 					yield nextSyllable, chunkLabels[idx]
 				interChunk = True
 
+			#random walk round community structure graph (see Schapiro et al. 2019?))
 			if experiment == 'schapiro':
 				syllable = 'a'
 				Tmat = np.array([[0,1,1,1,0,0,0,0,0,0,0,0,0,0,1],
-								 [1,0,1,1,1,0,0,0,0,0,0,0,0,0,0],
-								 [1,1,0,1,1,0,0,0,0,0,0,0,0,0,0],
-								 [1,1,1,0,1,0,0,0,0,0,0,0,0,0,0],
-								 [0,1,1,1,0,1,0,0,0,0,0,0,0,0,0],
-								 [0,0,0,0,1,0,1,1,1,0,0,0,0,0,0],
-								 [0,0,0,0,0,1,0,1,1,1,0,0,0,0,0],
-								 [0,0,0,0,0,1,1,0,1,1,0,0,0,0,0],
-								 [0,0,0,0,0,1,1,1,0,1,0,0,0,0,0],
-								 [0,0,0,0,0,0,1,1,1,0,1,0,0,0,0],
-								 [0,0,0,0,0,0,0,0,0,1,0,1,1,1,0],
-								 [0,0,0,0,0,0,0,0,0,0,1,0,1,1,1],
-								 [0,0,0,0,0,0,0,0,0,0,1,1,0,1,1],
-								 [0,0,0,0,0,0,0,0,0,0,1,1,1,0,1],
-								 [1,0,0,0,0,0,0,0,0,0,0,1,1,1,0]])
+								[1,0,1,1,1,0,0,0,0,0,0,0,0,0,0],
+								[1,1,0,1,1,0,0,0,0,0,0,0,0,0,0],
+								[1,1,1,0,1,0,0,0,0,0,0,0,0,0,0],
+								[0,1,1,1,0,1,0,0,0,0,0,0,0,0,0],
+								[0,0,0,0,1,0,1,1,1,0,0,0,0,0,0],
+								[0,0,0,0,0,1,0,1,1,1,0,0,0,0,0],
+								[0,0,0,0,0,1,1,0,1,1,0,0,0,0,0],
+								[0,0,0,0,0,1,1,1,0,1,0,0,0,0,0],
+								[0,0,0,0,0,0,1,1,1,0,1,0,0,0,0],
+								[0,0,0,0,0,0,0,0,0,1,0,1,1,1,0],
+								[0,0,0,0,0,0,0,0,0,0,1,0,1,1,1],
+								[0,0,0,0,0,0,0,0,0,0,1,1,0,1,1],
+								[0,0,0,0,0,0,0,0,0,0,1,1,1,0,1],
+								[1,0,0,0,0,0,0,0,0,0,0,1,1,1,0]])
 				while True:
 					nextSyllable = random.choices(syllables,weights = Tmat[syllables.index(syllable)])[0]
 					if nextSyllable in ['a','b','c','d','e']: chunkLabel = 0
@@ -269,6 +298,7 @@ def _getNextSyllable(inputParams): #an iterator functions that when calls spits 
 					yield nextSyllable, chunkLabel
 					syllable = nextSyllable
 
+			#select syllable randomly from a pdf specific to current chunk
 			if experiment == 'schaeffer':
 				pdfs = inputParams['pdfs']
 				idx = random.choices(range(len(pdfs)),weights=chunkProbs)[0]
@@ -281,7 +311,16 @@ def _getNextSyllable(inputParams): #an iterator functions that when calls spits 
 
 
 def getInputs(inputParams,totalTime=None):
+	"""Constructs the inputs given all the information contained in inputParams. Returns a dict with all the information/data about the input inside. 
+	This dict is used later on by variety of functions. This function relies on _getNextSyllable and _syllableShape
+	Args:
+		inputParams (dict): dictionary of inputParameters. Non-option but if anything keys within the dictionary ar enot define these will be pulled from defaultInputParams
+		totalTime (float, optional): If defined this will overrule 'totalTime' define in inputParams to limit the time-length of the input. Defaults to None.
+	Returns:
+		dict: dictionary containing inputData and information. See bottom of function for description
+	"""
 
+	#pulls from defaultParams if any inputParams are not present
 	for item in list(defaultInputParams.keys()):
 		try: inputParams[item]
 		except KeyError:
@@ -303,9 +342,11 @@ def getInputs(inputParams,totalTime=None):
 	t = np.arange(inputParams['totalTime'] * 1000) / 1000 #time in units of seconds
 	T = len(t) #maximum index of time array 
 
+	#initialse inout data array as all zeros 
 	data = np.zeros(shape=(T,_syllableShape(inputParams=inputParams).shape[1])) 
 
 	s = 0 
+	#pulls next syllabme from _getNextSyllable then creates the input array for this syllable and adds it to the full input data array
 	for nextSyllable, nextChunkLabel in _getNextSyllable(inputParams=inputParams):
 		if s*inputParams['width'] >= T: 
 			break
@@ -327,44 +368,53 @@ def getInputs(inputParams,totalTime=None):
 			oldChunkChangeId = chunkChangeId
 		oldChunkLabel = chunkLabel
 
-	inputData = {'data':data,
-				 'chunkData':chunkData,
-				 'chunkLabelList':chunkLabelList,
-				 'chunkList':inputParams['chunkList'],
-				 'syllableList':syllableList,
-				 't':t,
-				 'syllables':inputParams['syllables'],
-				 'inputParams':inputParams}
+	inputData = {'data':data,                    #the input data that will be passed to the reservoir
+				't':t,                           #timestamps for all the inputs
+				'chunkData':chunkData,           #lists of where all the chunks start and finish and what their chunkId is. 
+				'chunkLabelList':chunkLabelList, #same size as t, a label for every time stamp of what chunk you're currently in (contains same info as chunkData just different form which is sometimes useful)
+				'syllableList':syllableList,     #list of syllables as they appear in the input data (one entry per syllable, not per time step)
+				'inputParams':inputParams}       #all of the input parameters which went into making this (quite useful for stuff later on) 
 
 	return inputData
 
 
-def plotInputs(inputs,tstart=0,tend=5,title=' ',saveName=None):
+def plotInputs(inputs,tstart=0,tend=5,title=None,saveName=""):
+	"""Takes the inputs and plots it nicely showing where the chunks are (shaded) and listing syllables on yaxis
+
+	Args:
+		inputs (dict): the basic input data dictionary returned when you make the input (i.e. returned by getInputs)
+		tstart (int, optional): time to start plotsting at. Defaults to 0.
+		tend (int, optional): time to end plotting at. Defaults to 5.
+		title (str, optional): Plto title. Defaults to None.
+		saveName (str, optional): Name for saving to file. Defaults to "".
+
+	Returns:
+		[type]: [description]
+	"""	
 	inputArray = inputs['data']
 	t = inputs['t']
 	chunkData = inputs['chunkData']
-	syllables = inputs['syllables']
+	syllables = inputs['inputParams']['syllables']
 
 	fig, ax = plt.subplots(figsize=(4,2))
 	T = t[-1]
 
 	s, e = np.abs(t - tstart).argmin(), np.abs(t - min(tend,t[-1])).argmin(),
-	yextent = 0.5*(3/26)*inputs['data'].shape[1]
+	yextent = 0.5*(3/26)*inputs['data'].shape[1] #scales y axis to make it look ok regardless of length you are plotting 
 
 	ax.imshow(inputArray.T[:,s:e],extent=[tstart,min(tend,t[-1]),0,yextent])
-	#ax.set_aspect(0.3*(tend-tstart))
 	ax.set_ylabel("Input")
 	ax.set_xlabel("Time / s")
 	plt.yticks((np.linspace(0,yextent*(1-1/len(syllables)),len(syllables)) + 0.5*yextent/len(syllables))[::-1],syllables)
-	for c in chunkData:
+	for c in chunkData: #shade where chunks are 
 		if c[1] < min(tend,t[-1]) and c[2] > tstart:
 			rect = matplotlib.patches.Rectangle((c[1],yextent),(c[2]-c[1]),-yextent,linewidth=0,edgecolor='r',facecolor='C%s'%(c[0]),alpha=0.3)
 			ax.add_patch(rect)
 	ax.grid(False)
-	ax.set_title(title)
+	if title is not None: 
+		ax.set_title(title)
 
-	if saveName is not None: 
-		plt.savefig("./figures/"+saveName+".png",dpi=300, bbox_inches='tight')
+	saveFigure(fig, saveName)
 
 	return fig, ax
 
@@ -373,28 +423,22 @@ def plotInputs(inputs,tstart=0,tend=5,title=' ',saveName=None):
 
 
 
-"""
-Saves a figure in "./figures/<todays_date>/<figure_name>_<todaystime>.png"
-Makes the folder if it doesn't exist
 
-Parameters: 
-• fig: the figure object
-• saveTitle: the title (a string) to save figure as
 
-Returns:
-Nothing is returned
-"""
-def saveFigure(fig,saveTitle=None):
+def saveFigure(fig,saveTitle=""):
+	"""saves figure to file, by data (folder) and time (name) 
+	Args:
+		fig (matplotlib fig object): the figure to be saved
+		saveTitle (str, optional): name to be saved as. Current time will be appended to this Defaults to "".
+	"""	
 	today =  datetime.strftime(datetime.now(),'%y%m%d')
 	if not os.path.isdir(f"./figures/{today}/"):
 		os.mkdir(f"./figures/{today}/")
-	if saveTitle is None: 
-		saveTitle=""
 	figdir = f"./figures/{today}/"
 	now = datetime.strftime(datetime.now(),'%H%M')
+	path = f"{figdir}{saveTitle}_{now}.png"
 	fig.savefig(f"{figdir}{saveTitle}_{now}.png", dpi=300,tight_layout=True)
-	
-	return
+	return path
 
 
 
@@ -403,45 +447,58 @@ def saveFigure(fig,saveTitle=None):
 	
 	
 class ReservoirPair():
-	def __init__(self,hyperparams,inputs):
-
+	"""Initilises and controls a pair of reservoirs which intereact as defined in Asabuki et al. 2018
+	These two networks can be called individually as ReservoirPair.res1 and ReservoirPair.res2. At which point they are nothing more than instances of the reservoir class defined above
+	The point of this class is to make it quick and easy to train two networks to do temporal chunking (as defined in the paper) 
+	Thus it has a number of functions: 
+	• trainPair implements the mutual prediction training algorithm 
+	• store inputs allows you to store an new input (the basic input dictionary from getInput) under a name which can later be trained or tested on. 
+	• f rectified tanh activating applied to output for the neighbour to predict (mutual inhibition if multiple outputs)
+	
+	"""	
+	def __init__(self,hyperparams,inputs=None):
+		"""Initialises the reservoir pair 
+		Args:
+			hyperparams (dict): Dictionary of hyperparameters, primarily for the reservoir networks
+			inputs (dict, optional): If defined these will be stored as an input under the name 'train', by default training will be on this input. Defaults to None.
+		"""		
 		self.hyperparams = hyperparams
-		#some useful hyperparams to pull out 
-		self.Nz = self.hyperparams['Nz']
-		self.inputDict = {}
-		self.hist = {}
+
+		self.inputDict = {} #a dictionary in which input dictionaries will be stored (for training and testing) 
+		self.hist = {} #a dictionary forsaving historical data (useful for later plotting)
 
 		# set inputs 
 		if inputs != None: 
 			self.storeInputs(inputs,name='train')
 
+		#initialise each reservoir
 		self.res1 = Reservoir(hyperparams)
 		self.res2 = Reservoir(hyperparams)
-
-
-	def f(self,ya,yb,beta=3,gamma=0.5):
-		try: gamma = self.hyperparams['gamma']
-		except KeyError: pass
-		if self.Nz > 1:
-			for i in range(self.Nz):
-				for j in range(i+1,i+1+self.Nz-1):
-					ya[i] += - gamma*ya[j%self.Nz]
-					yb[i] += - gamma*yb[j%self.Nz]                    
-		ya = np.tanh(ya/beta)
-		yb = np.tanh(yb/beta)
-		ya = np.maximum(ya,0)
-		yb = np.maximum(yb,0)
-		return ya,yb
+	
+	def storeInputs(self,inputs,name='input'):
+		"""Stores inputs in a dictionary. Useful as multiple inputs (from getInput) can be saved, some used for training, some used tfor testing/experimenting later. 
+		Args:
+			inputs (dict): standard inputDict from getInput
+			name (str): What to call this input . Defaults to 'input'
+		"""		
+		self.inputDict[name] = inputs
 
 	def trainPair(self,window=5,saveTrain=False,returnItems=['z']):
+		"""Trains the reservoir pair by mutual prediction algorithm discussed in Asabuki et al. 2018.
+		Args:
+			window (int, optional): The output-to-be-predicted is normalised by a running average this long, in seconds. Defaults to 5.
+			saveTrain (bool, optional): If true, the items in returnItems will be saved to history. Defaults to False.
+			returnItems (list, optional): Which items to return to the user. Defaults to ['z'].
+		"""		
 		dt = self.hyperparams['dt']
-		z1_list = np.zeros(shape=(self.Nz,int(window/(dt/1000))))
-		z2_list = np.zeros(shape=(self.Nz,int(window/(dt/1000))))
-		self.hist['train'] = {}
-		self.hist['train']['z'] = np.zeros(shape=(self.hyperparams['Nz'],self.inputDict['train']['data'].shape[0],1))
-		self.hist['train']['r'] = np.zeros(shape=(self.hyperparams['Nres'],self.inputDict['train']['data'].shape[0],1))
-
-
+		z1_list = np.zeros(shape=(self.hyperparams['Nz'],int(window/(dt/1000))))
+		z2_list = np.zeros(shape=(self.hyperparams['Nz'],int(window/(dt/1000))))
+		
+		if saveTrain == True:
+			self.hist['train'] = {}
+			self.hist['train']['z'] = np.zeros(shape=(self.hyperparams['Nz'],self.inputDict['train']['data'].shape[0],1))
+			self.hist['train']['r'] = np.zeros(shape=(self.hyperparams['Nres'],self.inputDict['train']['data'].shape[0],1))
+			
 		inputs = self.inputDict['train']
 		for i in tqdm(range(len(inputs['data'])),desc='Training reservoir pair'):
 			reservoir1Output = self.res1.runDynamicsStep(inputs['data'][i],returnItems=returnItems)
@@ -454,7 +511,7 @@ class ReservoirPair():
 				r1 = reservoir1Output['r']
 				r2 = reservoir2Output['r']
 
-			if saveTrain == True:
+			if saveTrain == True: 
 				if 'z' in returnItems:
 					self.hist['train']['z'][:,i,0] = z1
 				if 'r' in returnItems:
@@ -467,15 +524,10 @@ class ReservoirPair():
 				y1 = (z1 - np.mean(z1_list,axis=1)) / np.std(z1_list,axis=1)
 				y2 = (z2 - np.mean(z2_list,axis=1)) / np.std(z2_list,axis=1)
 
-				y1,y2 = self.f(y1,y2)
+				y1,y2 = self.rectifiedTanhOutput(y1,y2)
 
-				self.res1.runTrainingStep(y2)
-				self.res2.runTrainingStep(y1) 
-
-
-
-	def storeInputs(self,inputs,name):
-		self.inputDict[name] = inputs
+				self.res1.runTrainingStep(y2) #res1 tries to predict res2
+				self.res2.runTrainingStep(y1) #res2 tries to predict res1
 
 	def testPair(self,Ntest=1,testName='test',testData='test',returnItems=['z'],verbose=True):
 		Nz = self.hyperparams['Nz']
@@ -491,6 +543,20 @@ class ReservoirPair():
 					self.hist[testName]['z'][:,j,i] = reservoirOutput['z']
 				if 'r' in returnItems:
 					self.hist[testName]['r'][:,j,i] = reservoirOutput['r']
+
+	def rectifiedTanhOutput(self,ya,yb,beta=3,gamma=0.5):
+		try: gamma = self.hyperparams['gamma']
+		except KeyError: pass
+		if self.hyperparams['Nz'] > 1:
+			for i in range(self.hyperparams['Nz']):
+				for j in range(i+1,i+1+self.hyperparams['Nz']-1):
+					ya[i] += - gamma*ya[j%self.hyperparams['Nz']]
+					yb[i] += - gamma*yb[j%self.hyperparams['Nz']]                    
+		ya = np.tanh(ya/beta)
+		yb = np.tanh(yb/beta)
+		ya = np.maximum(ya,0)
+		yb = np.maximum(yb,0)
+		return ya,yb
 
 	def identicalInitialisation(self,x=None,name='test',t=0):
 		if x is not None:
@@ -573,11 +639,11 @@ class AnimatedScatter(object):
 		self.data = data[::self.skip,:]
 		self.count = 0
 		# Setup the figure and axes...
-		self.fig, self.ax = plt.subplots(figsize=(3,3))
+		self.rectifiedTanhOutputig, self.ax = plt.subplots(figsize=(3,3))
 
 		# Then setup FuncAnimation.
 		self.ani = anim.FuncAnimation(self.fig, self.update, frames=frames,interval=int(1000/fps), 
-										  init_func=self.setup_plot, blit=True)
+										init_func=self.setup_plot, blit=True)
 
 		plt.close()
 
@@ -639,7 +705,7 @@ class AnimatedChaos(object):
 
 		# Then setup FuncAnimation.
 		self.ani = anim.FuncAnimation(self.fig, self.update, frames=frames-2,interval=int(1000/fps), 
-										  init_func=self.setup_plot, blit=True)
+										init_func=self.setup_plot, blit=True)
 
 		plt.close()
 
