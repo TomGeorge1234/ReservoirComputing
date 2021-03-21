@@ -5,6 +5,7 @@ import copy
 import time 
 import pickle
 from IPython.display import Video
+from pprint import pprint
 import matplotlib 
 import random
 from tqdm.notebook import tqdm
@@ -25,6 +26,7 @@ rcParams['ytick.labelsize']=4
 rcParams['grid.linewidth']=0.5
 rcParams['legend.fontsize']=4
 rcParams['lines.linewidth']=0.5
+rcParams.update({'figure.autolayout': True})
 rcParams['xtick.major.pad']=2
 rcParams['xtick.minor.pad']=2
 rcParams['ytick.major.pad']=2
@@ -73,9 +75,9 @@ class Reservoir():
 
 		self.Nres = hyperparams['Nres']          #no. reservoir units 
 		self.Nz = hyperparams['Nz']              #no. output units
-		self.Nin = hyperparams['Nin']            #no. input units
-		self.Nres_in = hyperparams['Nres_in']    #no. reservoir units which directly connect to input
-		self.Nres_out = hyperparams['Nres_out']  #no. reservoir units which directly connect to output
+		self.Nin = hyperparams['Nin']        #no. input units
+		self.Nres_in = min(hyperparams['Nres_in'],self.Nres)    #no. reservoir units which directly connect to input
+		self.Nres_out = min(hyperparams['Nres_out'], self.Nres)  #no. reservoir units which directly connect to output
 		self.p = hyperparams['p']                #probability two reservoir units are connected 
 		self.ipr = hyperparams['ipr']            #no. of input units each input-connected reservoir unit joins
 		self.dt = hyperparams['dt']              #simulation time constant in ms
@@ -421,6 +423,7 @@ def plotInputs(inputs,tstart=0,tend=5,title=None,saveName=""):
 	if title is not None: 
 		ax.set_title(title)
 
+	saveName = "inputs"+saveName
 	saveFigure(fig, saveName)
 
 	return fig, ax
@@ -471,7 +474,10 @@ class ReservoirPair():
 
 		self.inputDict = {} #a dictionary in which input dictionaries will be stored (for training and testing) 
 		self.hist = {} #a dictionary forsaving historical data (useful for later plotting)
-
+		
+		self.z1_list = None
+		self.z2_list = None
+		
 		# set inputs 
 		if inputs != None: 
 			self.storeInputs(inputs,name='train')
@@ -488,30 +494,37 @@ class ReservoirPair():
 		"""		
 		self.inputDict[name] = inputs
 
-	def trainPair(self,window=5,saveTrain=False,returnItems=['z'],maxTrainTime=None):
+	def trainPair(self,inputs=None,window=5,saveTrain=False,returnItems=['z'],maxTrainTime=None):
 		"""Trains the reservoir pair by mutual prediction algorithm discussed in Asabuki et al. 2018.
 		Args:
+			inputs (dict): the input dictionary to be trained on, if not defined will try reservoirPair.inputDict['train']. Defaults to None.
 			window (int, optional): The output-to-be-predicted is normalised by a running average this long, in seconds. Defaults to 5.
 			saveTrain (bool, optional): If true, the items in returnItems will be saved to history. Defaults to False.
 			returnItems (list, optional): Which items to return to the user. Defaults to ['z'].
-		"""		
+		"""	
+
+		if inputs is None: 
+			inputs = self.inputDict['train']
+
 		dt = self.hyperparams['dt']
-		z1_list = np.zeros(shape=(self.hyperparams['Nz'],int(window/(dt/1000))))
-		z2_list = np.zeros(shape=(self.hyperparams['Nz'],int(window/(dt/1000))))
+		if ((self.z1_list is None) or (self.z2_list is None)):
+			self.z1_list = np.zeros(shape=(self.hyperparams['Nz'],int(window/(dt/1000))))
+			self.z2_list = np.zeros(shape=(self.hyperparams['Nz'],int(window/(dt/1000))))
+			self.z_boollist = np.zeros(shape=(int(window/(dt/1000))),dtype=bool)
+			self.readyToTrain = False
+
 
 		if saveTrain == True:
-			self.hist['train'] = {}
-			self.hist['train']['z'] = np.zeros(shape=(self.hyperparams['Nz'],self.inputDict['train']['data'].shape[0],1))
-			self.hist['train']['r'] = np.zeros(shape=(self.hyperparams['Nres'],self.inputDict['train']['data'].shape[0],1))
-			
-		inputs = self.inputDict['train']
+			self.res1.hist['train'] = {}
+			self.res1.hist['train']['z'] = np.zeros(shape=(self.hyperparams['Nz'],self.inputDict['train']['data'].shape[0],1))
+			self.res1.hist['train']['r'] = np.zeros(shape=(self.hyperparams['Nres'],self.inputDict['train']['data'].shape[0],1))
+			self.res1.hist['train']['inputs'] = inputs
 
 		if maxTrainTime is None: endIdx = len(inputs['data'])
 		else: endIdx = np.argmin(np.abs(inputs['t'] - maxTrainTime))
 		for i in tqdm(range(endIdx),desc='Training reservoir pair'):
 			reservoir1Output = self.res1.runDynamicsStep(inputs['data'][i],returnItems=returnItems)
 			reservoir2Output = self.res2.runDynamicsStep(inputs['data'][i],returnItems=returnItems)
-
 
 			z1 = reservoir1Output['z']
 			z2 = reservoir2Output['z']
@@ -521,23 +534,37 @@ class ReservoirPair():
 
 			if saveTrain == True: #save outputs 
 				if 'z' in returnItems:
-					self.hist['train']['z'][:,i,0] = z1
+					self.res1.hist['train']['z'][:,i,0] = z1
 				if 'r' in returnItems:
-					self.hist['train']['r'][:,i,0] = r1
+					self.res1.hist['train']['r'][:,i,0] = r1
 
-			z1_list = np.roll(z1_list, -1); z1_list[:,-1] = z1 #roll short term history arrays and replace last with new output
-			z2_list = np.roll(z2_list, -1); z2_list[:,-1] = z2
+			self.z1_list = np.roll(self.z1_list, -1); self.z1_list[:,-1] = z1 #roll short term history arrays and replace last with new output
+			self.z2_list = np.roll(self.z2_list, -1); self.z2_list[:,-1] = z2
+			self.z_boollist = np.roll(self.z_boollist, -1); self.z_boollist[-1] = True
+			if np.all(self.z_boollist): 
+				self.readyToTrain = True
 
-			if i > window / (dt/1000): 
-				y1 = (z1 - np.mean(z1_list,axis=1)) / np.std(z1_list,axis=1) #normalise the output
-				y2 = (z2 - np.mean(z2_list,axis=1)) / np.std(z2_list,axis=1)
+			if self.readyToTrain == True: 
+				y1 = (z1 - np.mean(self.z1_list,axis=1)) / np.std(self.z1_list,axis=1) #normalise the output
+				y2 = (z2 - np.mean(self.z2_list,axis=1)) / np.std(self.z2_list,axis=1)
 
-				y1,y2 = self.rectifiedTanhOutput(y1,y2) #rectiry tanh it as per paper 
+				(y1,y2) = self.rectifiedTanhOutput(y1,y2) #rectiry tanh it as per paper 
 
 				self.res1.runTrainingStep(y2) #res1 tries to predict res2
 				self.res2.runTrainingStep(y1) #res2 tries to predict res1
 
 	def rectifiedTanhOutput(self,ya,yb,beta=3,gamma=0.5):
+		"""function applied to the outputs before being passed to train the neghbouring reservoir
+			rectified tanh. if multidimensional, there is also inhibition. 
+		Args:
+			ya (list or array): current output from res1 (singe time step, one entry per output node (Nz))
+			yb (list or array): current output from res1 (singe time step, one entry per output node (Nz))
+			beta (int, optional): Sharpness of tanh (higher = more step-function-like). Defaults to 3.
+			gamma (float, optional): Amount of inhibition (if >= 2 outputs). Defaults to 0.5.
+
+		Returns:
+			tuple: (ya,yb) after function applied 
+		"""		
 		try: gamma = self.hyperparams['gamma']
 		except KeyError: pass
 		if self.hyperparams['Nz'] > 1:
@@ -549,15 +576,19 @@ class ReservoirPair():
 		yb = np.tanh(yb/beta)
 		ya = np.maximum(ya,0)
 		yb = np.maximum(yb,0)
-		return ya,yb
+		return (ya,yb)
+
+	def resetWeights(self):
+		res1.w = np.random.randn(res1.Nz,res1.Nres_out)/np.sqrt(res1.Nres_out)
+		res2.w = np.random.randn(res2.Nz,res2.Nres_out)/np.sqrt(res2.Nres_out)
+		return
 
 
 
 
 
 
-
-def testReservoir(reservoir,inputs,Ntest=1,testName='test',saveItems=['z'],verbose=True,plotAfter=False):
+def testReservoir(reservoir,inputs=None,Ntest=1,testName='test',saveItems=['z','r'],verbose=True,maxTestTime=None,plotAfter=False):
 	"""Tests reservoir (if reservoir pair is passed, it tests res1 of this pair) on an inputs and stores to history. 
 	Args:
 		reservoir (reservoir): the reservoir to test 
@@ -572,6 +603,14 @@ def testReservoir(reservoir,inputs,Ntest=1,testName='test',saveItems=['z'],verbo
 	if reservoir.className == 'ReservoirPair': #if you pass a reservoir pair, defaults to res1
 		reservoir = reservoir.res1
 
+	if inputs is None:
+		inputs = reservoir.hist['train']['inputs']
+
+	endTestTime_idx = len(inputs['t'])
+	if (maxTestTime is not None):
+		endTestTime_idx = np.argmin(np.abs(inputs['t'] - maxTestTime))
+
+
 	Nz = reservoir.hyperparams['Nz']
 	Nres = reservoir.hyperparams['Nres']
 
@@ -583,9 +622,10 @@ def testReservoir(reservoir,inputs,Ntest=1,testName='test',saveItems=['z'],verbo
 	reservoir.hist[testName]['r'] = np.zeros(shape=(Nres,testData.shape[0],Ntest))
 	reservoir.hist[testName]['inputs'] = inputs
 
+
 	#run the tests
 	for i in tqdm(range(Ntest),desc='Running multiple tests of reservoir',disable=(not verbose)):
-		for j in tqdm(range(testData.shape[0]),desc='Test %g'%i,leave=False,disable=(not verbose)):
+		for j in tqdm(range(endTestTime_idx),desc='Test %g'%i,leave=False,disable=(not verbose)):
 			reservoirOutput = reservoir.runDynamicsStep(testData[j],returnItems=saveItems)
 			if 'z' in saveItems: 
 				reservoir.hist[testName]['z'][:,j,i] = reservoirOutput['z']
@@ -601,7 +641,7 @@ def testReservoir(reservoir,inputs,Ntest=1,testName='test',saveItems=['z'],verbo
 
 
 
-
+print()
 
 def plotTest(reservoir,
 			testName='test',
@@ -609,6 +649,7 @@ def plotTest(reservoir,
 			tend=5,
 			colorOrders=None,
 			plotTrials=False,
+			title="",
 			saveName=""):
 	"""Plots the result of a test on a reservoir. `the input to, and the results from, this test are saved in reservoir.testhist under the key name.
 	Dispalys the outputs of the reservoir, the plot is sahed according to whether the network is current in a chunk or not
@@ -620,10 +661,12 @@ def plotTest(reservoir,
 		tend (float, optional): time in test to stop plotting. Defaults to 5.
 		colorOrders (list of strs, optional): List colours for the reservoir outputs to be plotted as. Defaults to None.
 		plotTrials (bool, optional): If True, all trials are plotted in a light shade. Defaults to True.
+		title (str): plot title. Defaults to "".
 		saveName (str, optional): name for plot to be saved as. Defaults to "".
 
 	Returns:
-		[type]: [description]
+		fig: figure fig (matplotlib)
+		ax: figure axis object (matplotlib)
 	"""	
 	if reservoir.className == 'ReservoirPair': #if you pass a reservoir pair, defaults to res1
 		reservoir = reservoir.res1
@@ -651,6 +694,9 @@ def plotTest(reservoir,
 	ax.set_xlabel('Time / s')
 	ax.set_ylabel('Activity')
 
+	ax.set_title(title)
+	
+	saveName = "test"+saveName
 	saveFigure(fig, saveName)
 
 	return fig, ax 
@@ -691,6 +737,95 @@ def loadAndDepickle(name, saveDir='./savedItems/'):
 
 
 
+
+
+
+
+
+
+
+def dimensionalityReducedPlot(reservoir, testName='test',saveName=""):
+	"""takes a reservoir and the results from a test done on that and plots 1st 2 principle component representations of all syllables inside and outside chunks. 
+	Args:
+		reservoir (Reservoir class): The reservoir where the test history data is stored 
+		testName (str, optional): In the reservoir these should be a bank of histories. reservoir.hist[<testName>] will be the one plotted in this analysis. Defaults to 'test'.
+		saveName (str, optional): Figure will be saved under this name in the figures directory. Defaults to ""
+	Returns:
+		fig: the figure object, matplotlib
+		ax: axis object, matplotlib
+	"""	
+	X = reservoir.hist[testName]['r'][:,:,0].T #after transpose shape is Ntimestep x Nres
+	X = X - np.mean(X,axis=0)
+	XX_T = np.matmul(X.T,X)
+	eigenvals, eigenvecs = np.linalg.eig(XX_T)
+	reducedX = np.matmul(X,eigenvecs[:,:2])
+
+	inputs = reservoir.hist[testName]['inputs']
+	syllablesByChunk = {}
+	syllablesByChunk['r'] = {}
+	for chunkLabel in inputs['inputParams']['chunkLabels']:
+		syllablesByChunk[chunkLabel] = {}
+	for (i,z) in enumerate(reducedX):
+		syllable = inputs['syllableList'][i]
+		chunkLabel = inputs['chunkLabelList'][i]
+
+		try:
+			syllablesByChunk[chunkLabel][syllable]
+		except KeyError: #initialise
+			syllablesByChunk[chunkLabel][syllable] = {}
+			syllablesByChunk[chunkLabel][syllable]['count'] = 0
+			syllablesByChunk[chunkLabel][syllable]['mean'] = np.array([0,0],dtype=float)
+			syllablesByChunk[chunkLabel][syllable]['M'] = np.array([0,0],dtype=float)
+			syllablesByChunk[chunkLabel][syllable]['std'] = np.array([0,0],dtype=float)
+
+		syllablesByChunk[chunkLabel][syllable]['count'] += 1 #update count 
+		mean = syllablesByChunk[chunkLabel][syllable]['mean']
+		count = syllablesByChunk[chunkLabel][syllable]['count']
+		delta = z - mean
+		syllablesByChunk[chunkLabel][syllable]['mean'] += delta/count #update mean 
+		mean = syllablesByChunk[chunkLabel][syllable]['mean']
+		delta2 = z - mean
+		syllablesByChunk[chunkLabel][syllable]['M'] += delta*delta2 #update M
+		M = syllablesByChunk[chunkLabel][syllable]['M']
+		syllablesByChunk[chunkLabel][syllable]['std'] = np.sqrt(M/count)
+
+	fig, ax = plt.subplots(figsize=(1.5,1.5))
+	for chunkLabel in syllablesByChunk:
+		for syllable in syllablesByChunk[chunkLabel]:
+			mean = syllablesByChunk[chunkLabel][syllable]['mean']
+			std = syllablesByChunk[chunkLabel][syllable]['std']
+			(x,y) = (mean[0],mean[1])
+			(width,height)=(2*std[0],2*std[1])
+			if chunkLabel == 'r': col = 'grey'
+			else: col = 'C%s'%(chunkLabel)
+			ellipse = matplotlib.patches.Ellipse((x,y), width, height,linewidth=0,edgecolor='r',facecolor=col,alpha=0.2)
+			ax.add_patch(ellipse)
+			ax.text(x,y,syllable,color=col)
+	ax.set_xlim([-np.max(np.abs(reducedX)),np.max(np.abs(reducedX))])
+	ax.set_ylim([-np.max(np.abs(reducedX)),np.max(np.abs(reducedX))])
+	ax.set_xlabel("PCA1")
+	ax.set_ylabel("PCA2")
+
+	saveName = "pca"+saveName
+	saveFigure(fig,saveName)
+	
+	return fig, ax
+
+
+
+
+
+def histogramWeights(reservoir,xmax=None,saveName=""):
+	w = np.reshape(reservoir.w,-1)
+	fig, ax = plt.subplots(figsize=(1,1))
+	ax.set_xlabel("Weight strength")
+	ax.set_ylabel("Count")
+	ax.hist(w,bins=40)
+	if xmax is not None: 
+		ax.set_xlim(xmax,-xmax)
+	saveName = "weights"+saveName
+	saveFigure(fig,saveName)
+	return fig, ax
 
 
 
@@ -848,4 +983,4 @@ def getAveragePosterior(likelihood_c1, likelihood_c2, nObservations, priorCentre
 		stdPosterior_c1.append(np.sqrt(np.average((p-avPosterior_c1[-1])**2, weights = Ma_c1)))
 		stdPosterior_c2.append(stdPosterior_c1[-1])
 
-	return np.array(avPosterior_c1) #, np.array(avPosterior_c2), np.array(stdPosterior_c1), np.array(stdPosterior_c2)
+	return np.array(avPosterior_c1) #, np.array(avPosterior_c2), np.array(stdPosterior_c1), np.array(stdPosterior_c2)`
