@@ -813,6 +813,9 @@ def dimensionalityReducedPlot(reservoir, testName='test',saveName=""):
 
 
 
+def averageChunkPlot(reservoir, inputs):
+	return
+
 
 
 def histogramWeights(reservoir,xmax=None,saveName=""):
