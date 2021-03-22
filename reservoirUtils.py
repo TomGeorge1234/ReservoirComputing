@@ -100,8 +100,11 @@ class Reservoir():
 		#each reservoir neurons connects to on average self.ipr input nodes
 		J_GI = np.zeros(shape=(self.Nres,self.Nin))
 		for i in range(self.Nres_in):
+			idx = list(range(self.Nin))
+			random.shuffle(idx)
+			choosenIdxs = idx[:self.ipr]
 			for j in range(self.Nin):
-				if np.random.random()<(self.ipr/(self.Nin)):
+				if j in choosenIdxs:
 					J_GI[i,j] = np.random.normal()
 		self.J_GI = J_GI 
 
