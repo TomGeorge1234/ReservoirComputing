@@ -53,6 +53,7 @@ defaultHyperparams = {'Nres' : 300,     #no. reservoir units
 					'alpha' : 100,      #FORCE learning rate (aka. P-matrix regularisation param)
 					'g_res' : 1.5,      #connection strength of reservoir units  
 					'g_FB' : 1,         #connection strength of feedback 
+					'biasInput' : 0,    #a global input sent to all neurons 
 					'sigma' : 0.3}      #network noise std
 
 
@@ -78,6 +79,7 @@ class Reservoir():
 		self.Nin = hyperparams['Nin']        #no. input units
 		self.Nres_in = min(hyperparams['Nres_in'],self.Nres)    #no. reservoir units which directly connect to input
 		self.Nres_out = min(hyperparams['Nres_out'], self.Nres)  #no. reservoir units which directly connect to output
+		self.biasInput = hyperparams['biasInput']
 		self.p = hyperparams['p']                #probability two reservoir units are connected 
 		self.ipr = hyperparams['ipr']            #no. of input units each input-connected reservoir unit joins
 		self.dt = hyperparams['dt']              #simulation time constant in ms
@@ -149,7 +151,8 @@ class Reservoir():
 				(self.dt/self.tau)*self.g_res*np.matmul(self.J_GG,self.r) +  #recurrent input
 				(self.dt/self.tau)*self.g_FB*np.matmul(self.J_Gz,self.z) +  #feedback input
 				(self.dt/self.tau)*np.matmul(self.J_GI,inputVec) +  #external input
-					np.sqrt(self.dt)*self.sigma*np.random.randn(self.Nres)) #noise
+				(self.dt/self.tau)*np.ones(self.Nres)*self.biasInput + #bias input
+				np.sqrt(self.dt)*self.sigma*np.random.randn(self.Nres)) #noise
 		self.r = np.tanh(self.x)
 		self.z = np.matmul(self.w,self.r[self.synapseList])
 
@@ -747,7 +750,7 @@ def loadAndDepickle(name, saveDir='./savedItems/'):
 
 
 
-def dimensionalityReducedPlot(reservoir, testName='test',saveName=""):
+def dimensionalityReducedPlot(reservoir, testName='test',saveName="", method='PCA',dims=2):
 	"""takes a reservoir and the results from a test done on that and plots 1st 2 principle component representations of all syllables inside and outside chunks. 
 	Args:
 		reservoir (Reservoir class): The reservoir where the test history data is stored 
@@ -757,11 +760,18 @@ def dimensionalityReducedPlot(reservoir, testName='test',saveName=""):
 		fig: the figure object, matplotlib
 		ax: axis object, matplotlib
 	"""	
-	X = reservoir.hist[testName]['r'][:,:,0].T #after transpose shape is Ntimestep x Nres
-	X = X - np.mean(X,axis=0)
-	XX_T = np.matmul(X.T,X)
-	eigenvals, eigenvecs = np.linalg.eig(XX_T)
-	reducedX = np.matmul(X,eigenvecs[:,:2])
+	if method == 'PCA':
+		X = reservoir.hist[testName]['r'][:,:,0].T #after transpose shape is Ntimestep x Nres
+		X = X - np.mean(X,axis=0)
+		XX_T = np.matmul(X.T,X)
+		eigenvals, eigenvecs = np.linalg.eig(XX_T)
+		reducedX = np.matmul(X,eigenvecs[:,:dims])
+	
+	elif method == 'neurons':
+		X = reservoir.hist[testName]['r'][:,:,0].T
+		reducedX = X[:,:dims]
+
+
 
 	inputs = reservoir.hist[testName]['inputs']
 	syllablesByChunk = {}
@@ -803,9 +813,11 @@ def dimensionalityReducedPlot(reservoir, testName='test',saveName=""):
 			else: col = 'C%s'%(chunkLabel)
 			ellipse = matplotlib.patches.Ellipse((x,y), width, height,linewidth=0,edgecolor='r',facecolor=col,alpha=0.2)
 			ax.add_patch(ellipse)
+			if syllable == ' ':
+				syllable = '_'
 			ax.text(x,y,syllable,color=col)
-	ax.set_xlim([-np.max(np.abs(reducedX)),np.max(np.abs(reducedX))])
-	ax.set_ylim([-np.max(np.abs(reducedX)),np.max(np.abs(reducedX))])
+	ax.set_xlim([-0.6*np.max(np.abs(reducedX)),0.6*np.max(np.abs(reducedX))])
+	ax.set_ylim([-0.6*np.max(np.abs(reducedX)),0.6*np.max(np.abs(reducedX))])
 	ax.set_xlabel("PCA1")
 	ax.set_ylabel("PCA2")
 
