@@ -750,7 +750,7 @@ def loadAndDepickle(name, saveDir='./savedItems/'):
 
 
 
-def dimensionalityReducedPlot(reservoir, testName='test',saveName="", method='PCA',dims=2):
+def dimensionalityReducedPlot(reservoir, testName='test',saveName="", method='PCA',dims=2,plotEllipse=True):
 	"""takes a reservoir and the results from a test done on that and plots 1st 2 principle component representations of all syllables inside and outside chunks. 
 	Args:
 		reservoir (Reservoir class): The reservoir where the test history data is stored 
@@ -812,10 +812,11 @@ def dimensionalityReducedPlot(reservoir, testName='test',saveName="", method='PC
 			if chunkLabel == 'r': col = 'grey'
 			else: col = 'C%s'%(chunkLabel)
 			ellipse = matplotlib.patches.Ellipse((x,y), width, height,linewidth=0,edgecolor='r',facecolor=col,alpha=0.2)
-			ax.add_patch(ellipse)
+			if plotEllipse == True:
+				ax.add_patch(ellipse)
 			if syllable == ' ':
 				syllable = '_'
-			ax.text(x,y,syllable,color=col)
+			ax.text(x,y,syllable,color=col,fontsize=7)
 	ax.set_xlim([-0.6*np.max(np.abs(reducedX)),0.6*np.max(np.abs(reducedX))])
 	ax.set_ylim([-0.6*np.max(np.abs(reducedX)),0.6*np.max(np.abs(reducedX))])
 	ax.set_xlabel("PCA1")
