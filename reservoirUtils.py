@@ -8,11 +8,12 @@ from IPython.display import Video
 from pprint import pprint
 import matplotlib 
 import random
+from numba import jit 
 from tqdm.notebook import tqdm
 import os
 from datetime import datetime
 from matplotlib import rcParams
-from cycler import cycler 
+from cycler import cycler
 plt.style.use("seaborn")
 rcParams['figure.dpi']= 300
 rcParams['axes.labelsize']=5
@@ -53,7 +54,6 @@ defaultHyperparams = {'Nres' : 300,     #no. reservoir units
 					'alpha' : 100,      #FORCE learning rate (aka. P-matrix regularisation param)
 					'g_res' : 1.5,      #connection strength of reservoir units  
 					'g_FB' : 1,         #connection strength of feedback 
-					'biasInput' : 0,    #a global input sent to all neurons 
 					'sigma' : 0.3}      #network noise std
 
 
@@ -79,7 +79,6 @@ class Reservoir():
 		self.Nin = hyperparams['Nin']        #no. input units
 		self.Nres_in = min(hyperparams['Nres_in'],self.Nres)    #no. reservoir units which directly connect to input
 		self.Nres_out = min(hyperparams['Nres_out'], self.Nres)  #no. reservoir units which directly connect to output
-		self.biasInput = hyperparams['biasInput']
 		self.p = hyperparams['p']                #probability two reservoir units are connected 
 		self.ipr = hyperparams['ipr']            #no. of input units each input-connected reservoir unit joins
 		self.dt = hyperparams['dt']              #simulation time constant in ms
@@ -151,7 +150,6 @@ class Reservoir():
 				(self.dt/self.tau)*self.g_res*np.matmul(self.J_GG,self.r) +  #recurrent input
 				(self.dt/self.tau)*self.g_FB*np.matmul(self.J_Gz,self.z) +  #feedback input
 				(self.dt/self.tau)*np.matmul(self.J_GI,inputVec) +  #external input
-				(self.dt/self.tau)*np.ones(self.Nres)*self.biasInput + #bias input
 				np.sqrt(self.dt)*self.sigma*np.random.randn(self.Nres)) #noise
 		self.r = np.tanh(self.x)
 		self.z = np.matmul(self.w,self.r[self.synapseList])
@@ -164,8 +162,9 @@ class Reservoir():
 		if 'x' in returnItems: returnables['x'] = self.x
 		return returnables
 
+	@partial(jax.jit(static_argnums(0,)))
 	def runTrainingStep(self,desiredOutputs):
-		"""Givenn a desired output, this trains the network (by FORCE learning, i.e. RLS) 
+		"""Given a desired output, this trains the network (by FORCE learning, i.e. RLS) 
 		Args:
 			desiredOutputs: desider output for current time step that the weights will be fitted to
 		Returns:
@@ -182,9 +181,6 @@ class Reservoir():
 		dw = - (c * (e_minus * np.tile(k,(self.Nz,1)).T)).T
 		self.w = self.w + dw
 		return e_minus
-
-
-
 
 
 
@@ -508,7 +504,7 @@ class ReservoirPair():
 			saveTrain (bool, optional): If true, the items in returnItems will be saved to history. Defaults to False.
 			returnItems (list, optional): Which items to return to the user. Defaults to ['z'].
 		"""	
-
+		training_func = jax.jit(function)
 		if inputs is None: 
 			inputs = self.inputDict['train']
 
@@ -645,10 +641,6 @@ def testReservoir(reservoir,inputs=None,Ntest=1,testName='test',saveItems=['z','
 	
 
 
-
-
-print()
-
 def plotTest(reservoir,
 			testName='test',
 			tstart=0,
@@ -711,8 +703,6 @@ def plotTest(reservoir,
 
 
 
-
-
 def pickleAndSave(class_,name,saveDir='./savedItems/'):
 	"""pickles and saves a class
 	this is not an efficient way to save the data, but it is easy 
@@ -739,10 +729,6 @@ def loadAndDepickle(name, saveDir='./savedItems/'):
 	with open(saveDir + name+'.pkl', 'rb') as input:
 		item = pickle.load(input)
 	return item
-
-
-
-
 
 
 
@@ -829,12 +815,19 @@ def dimensionalityReducedPlot(reservoir, testName='test',saveName="", method='PC
 
 
 
-def averageChunkPlot(reservoir, inputs):
-	return
+def histogramWeights(reservoir,xmax=None,saveName="",color='C0'):
+	"""Takes a reservoir and extracts the outputs weights and plots them as a historgram 
 
+	Args:
+		reservoir (Reservoir class): the reservoir, weights must be contained herein as res.w 
+		xmax (float, optional): max xrange. Defaults to None.
+		saveName (str, optional): save title. Defaults to "".
+		color (str, option): histogram colour, defauls to 'C0'
 
-
-def histogramWeights(reservoir,xmax=None,saveName=""):
+	Returns:
+		fig: matplotlib fig type 
+		ax: matplotlib ax type
+	"""	
 	w = np.reshape(reservoir.w,-1)
 	fig, ax = plt.subplots(figsize=(1,1))
 	ax.set_xlabel("Weight strength")
